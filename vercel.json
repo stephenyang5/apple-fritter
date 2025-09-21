@@ -1,0 +1,16 @@
+{
+  "functions": {
+    "api/slack.py": { "runtime": "python3.11" }
+  },
+  "routes": [
+    { "src": "/slack/commands", "dest": "/api/slack/commands" },
+    { "src": "/slack/events", "dest": "/api/slack/events" },
+    { "src": "/health", "dest": "/api/health" }
+  ],
+  "crons": [
+    {
+      "path": "/api/run_round?secret=@CRON_SECRET",
+      "schedule": "0 14 * * 1"
+    }
+  ]
+}
