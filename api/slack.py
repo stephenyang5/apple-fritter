@@ -21,7 +21,7 @@ SLACK_BOT_TOKEN      = os.getenv("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET")
 
 # Target pairing channel(s): "#name" or channel ID; multiple via comma-separated PAIRING_CHANNELS
-PAIRING_CHANNEL   = os.getenv("PAIRING_CHANNEL", "#coffee-intros")
+PAIRING_CHANNEL   = os.getenv("PAIRING_CHANNEL", "#fritters")
 PAIRING_CHANNELS  = os.getenv("PAIRING_CHANNELS")  # optional, comma-separated
 
 NO_REPEAT_WEEKS   = int(os.getenv("NO_REPEAT_WEEKS", "8"))
@@ -106,7 +106,8 @@ def storage_record_pairs(client, channel_id: str, groups: List[List[str]]) -> No
 
 def storage_get_recent_pairs(client, channel_id: str, since: dt.datetime) -> Set[Tuple[str, str]]:
     scid = _storage_channel_id(client)
-    oldest = str(since.timestamp())
+    # Fix: Convert datetime to Unix timestamp string properly
+    oldest = str(int(since.timestamp()))
     out: Set[Tuple[str, str]] = set()
     cursor = None
     while True:
@@ -144,7 +145,7 @@ def storage_set_opt_in(client, user_id: str, is_in: bool) -> None:
 def storage_get_opted_out(client) -> Set[str]:
     scid = _storage_channel_id(client)
     cursor = None
-    state = {}  # user_id -> is_in
+    all_opt_messages = []  # Collect all messages first
     while True:
         res = client.conversations_history(channel=scid, cursor=cursor, limit=200)
         for msg in res.get("messages", []):
@@ -158,13 +159,20 @@ def storage_get_opted_out(client) -> Set[str]:
                 continue
             if data.get("marker") != OPT_MARKER:
                 continue
-            u = data.get("user")
-            is_in = bool(data.get("is_in", True))
-            state[u] = is_in  # later messages overwrite earlier ones while scanning
+            all_opt_messages.append(data)
         cursor = res.get("response_metadata", {}).get("next_cursor")
         if not cursor:
             break
-    # default is IN if no record; opted-out are those explicitly False
+    
+    # Sort messages chronologically (oldest first)
+    all_opt_messages.sort(key=lambda x: x['when'])
+
+    state = {}  # user_id -> is_in
+    for data in all_opt_messages:
+        u = data.get("user")
+        is_in = bool(data.get("is_in", True))
+        state[u] = is_in  # Later messages (more recent) overwrite earlier ones
+
     return {u for u, is_in in state.items() if not is_in}
 
 # ---------- Meta: last-run week for biweekly cadence ----------
@@ -301,7 +309,7 @@ def post_groups_and_record(client, channel_id: str, groups: List[List[str]]) -> 
     if not groups:
         client.chat_postMessage(channel=channel_id, text="Not enough opted-in humans to make intros this round.")
         return
-    lines = [":fritter: New intros! I’ll DM each group to help you schedule."]
+    lines = [":fritter: New intros! I'll DM each group to help you schedule."]
     for g in groups:
         lines.append("• " + " ".join(f"<@{u}>" for u in g))
     client.chat_postMessage(channel=channel_id, text="\n".join(lines))
@@ -309,13 +317,13 @@ def post_groups_and_record(client, channel_id: str, groups: List[List[str]]) -> 
     # DM each group
     for g in groups:
         dm_text = (
-            ":wave: You’ve been matched for a coffee chat!\n"
+            ":wave: You've been matched for a fritter!\n"
             f"{' '.join([f'<@{u}>' for u in g])}\n\n"
             "Tips:\n"
-            "• Share a couple times that work next week.\n"
-            "• 20–30 min is perfect.\n"
-            "• Bring a fun question (what’s a hobby you picked up recently?).\n\n"
-            "Reply here together to coordinate. Have fun! :coffee:"
+            "• Share a couple times that work in the next two weeks :calendar: \n"
+            "• 20–30 min is perfect :star-struck:\n"
+            "• Bring a fun question e.g. what's your favorite way to eat a potato? :potato:\n\n"
+            "Reply here together to coordinate. Have fun! :fritter:"
         )
         resp = client.conversations_open(users=",".join(g))
         im_id = resp["channel"]["id"]
@@ -325,12 +333,22 @@ def post_groups_and_record(client, channel_id: str, groups: List[List[str]]) -> 
 
 def run_round_for_channel(channel_name_or_id: str) -> None:
     channel_id = _resolve_channel_id(bolt_app.client, channel_name_or_id)
+    # Log channel resolution for serverless logs
+    try:
+        print(json.dumps({"run_round": {"input": channel_name_or_id, "channel_id": channel_id}}, separators=(",", ":")))
+    except Exception:
+        pass
     if not channel_id:
         return
     members = get_channel_members(bolt_app.client, channel_id)
     opted_out = storage_get_opted_out(bolt_app.client)
     pool = [u for u in members if u not in opted_out]  # default IN unless explicitly OUT
     groups = make_groups(bolt_app.client, pool, channel_id, GROUP_SIZE, NO_REPEAT_WEEKS)
+    # Log group counts for visibility
+    try:
+        print(json.dumps({"run_round": {"pool_size": len(pool), "groups_count": len(groups)}}, separators=(",", ":")))
+    except Exception:
+        pass
     post_groups_and_record(bolt_app.client, channel_id, groups)
 
 # ------------------ Slash Commands ------------------

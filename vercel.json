@@ -1,11 +1,8 @@
 {
-  "functions": {
-    "api/**/*.py": { "runtime": "vercel-python@3.11" }
-  },
   "crons": [
     {
-      "path": "/api/run_round?secret=@CRON_SECRET",
-      "schedule": "0 14 * * 1"
+      "path": "/api/slack/run_round?secret=...",
+      "schedule": "0 18 * * 1"
     }
   ]
 }
