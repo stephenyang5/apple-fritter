@@ -1,6 +1,6 @@
-# Fritter
+# Apple Fritter
 
-Fritter is a Slack bot that was developed for CSCI0150 at Brown to automatically pairs people in a slack channel for casual 1:1 social introductions! It runs on [Vercel](https://vercel.com) as a serverless Python app (FastAPI + Slack Bolt) and uses a private Slack channel as its only persistence layer.
+Apple Fritter is a Slack bot that was developed for CSCI0150 at Brown to automatically pairs people in a slack channel for casual 1:1 social introductions! It runs on [Vercel](https://vercel.com) as a serverless Python app (FastAPI + Slack Bolt) and uses a private Slack channel as its only persistence layer.
 
 ## How it works
 
