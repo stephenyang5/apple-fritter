@@ -100,7 +100,7 @@ Make `#fritter-storage` private so only the bot and admins can see it. The chann
 ### 3a. Fork or clone this repo
 
 ```bash
-git clone <your-fork-url>
+git clone https://github.com/stephenyang5/apple-fritter.git
 cd fritter-vercel
 ```
 
