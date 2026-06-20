@@ -14,6 +14,7 @@ from slack_bolt.adapter.starlette.handler import to_starlette_response
 from slack_sdk.errors import SlackApiError
 from starlette.responses import Response
 
+
 # ------------------ Config ------------------
 load_dotenv()
 
