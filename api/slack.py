@@ -12,8 +12,6 @@ from slack_bolt import App
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 from slack_sdk.errors import SlackApiError
 
-import pytz
-
 # ------------------ Config ------------------
 load_dotenv()
 
@@ -26,7 +24,6 @@ PAIRING_CHANNELS  = os.getenv("PAIRING_CHANNELS")  # optional, comma-separated
 
 NO_REPEAT_WEEKS   = int(os.getenv("NO_REPEAT_WEEKS", "8"))
 GROUP_SIZE        = int(os.getenv("GROUP_SIZE", "2"))  # 2 or 3
-TIMEZONE          = os.getenv("TIMEZONE", "America/New_York")
 NO_REPEAT_MODE    = os.getenv("NO_REPEAT_MODE", "weeks").lower()  # "weeks" or "ever"
 
 # Slack channel used as a tiny "ledger" for persistence (must invite the bot)
@@ -37,8 +34,6 @@ CRON_SECRET       = os.getenv("CRON_SECRET")
 
 # Biweekly controls: run on "even" or "odd" ISO weeks (default: "even")
 BIWEEKLY_PARITY   = (os.getenv("BIWEEKLY_PARITY", "even").strip().lower() or "even")
-
-tz = pytz.timezone(TIMEZONE)
 
 # ------------------ Slack App (HTTP mode for Vercel) ------------------
 bolt_app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
@@ -181,30 +176,6 @@ def storage_record_last_week(client, week: int) -> None:
     scid = _storage_channel_id(client)
     text = f"{META_MARKER} ```{json.dumps(payload, separators=(',', ':'))}```"
     client.chat_postMessage(channel=scid, text=text)
-
-def storage_get_last_week(client) -> Optional[int]:
-    scid = _storage_channel_id(client)
-    cursor = None
-    while True:
-        res = client.conversations_history(channel=scid, cursor=cursor, limit=200)
-        for msg in res.get("messages", []):
-            txt = msg.get("text", "")
-            if META_MARKER not in txt:
-                continue
-            try:
-                blob = txt.split("```", 1)[1].rsplit("```", 1)[0]
-                data = json.loads(blob)
-            except Exception:
-                continue
-            if data.get("marker") == META_MARKER:
-                try:
-                    return int(data.get("week"))
-                except (TypeError, ValueError):
-                    continue
-        cursor = res.get("response_metadata", {}).get("next_cursor")
-        if not cursor:
-            break
-    return None
 
 # ------------------ Slack helper ops ------------------
 def get_channel_members(client, channel_id: str) -> List[str]:
@@ -404,7 +375,8 @@ async def health():
     return {"ok": True}
 
 # Vercel Cron target — runs weekly, skips based on week parity for biweekly behavior
-@api.post("/api/run_round")
+@api.get("/api/slack/run_round")
+@api.post("/api/slack/run_round")
 async def cron_run_round(request: Request):
     secret = request.query_params.get("secret")
     if not CRON_SECRET or secret != CRON_SECRET:

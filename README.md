@@ -1,103 +1,123 @@
 # Apple Fritter
 
-Apple Fritter is a Slack bot that was developed for CSCI0150 at Brown to automatically pairs people in a slack channel for casual 1:1 social introductions! It runs on [Vercel](https://vercel.com) as a serverless Python app (FastAPI + Slack Bolt) and uses a private Slack channel as its only persistence layer.
+Apple Fritter is a Slack bot that automatically pairs people in a channel for casual 1:1 social introductions. It was built for CSCI0150 at Brown and runs on [Vercel](https://vercel.com) as a serverless Python app (FastAPI + Slack Bolt).
 
-## How it works
-
-1. Every Monday at 6 PM UTC, Vercel Cron calls `/api/slack/run_round`.
-2. Fritter fetches all members of the configured pairing channel(s) and removes anyone who has opted out.
-3. It builds pairs (or trios), avoiding people who were matched together recently.
-4. It posts an announcement to the channel and sends each group a DM with scheduling tips.
-5. The pairing history and opt-in/out state are stored as JSON messages in a private `#fritter-storage` channel.
-
-Biweekly scheduling is supported: set `BIWEEKLY_PARITY` to `even` or `odd` to skip alternating ISO weeks.
+**No database required.** Pairing history and opt-in/out state are stored as JSON messages in a private Slack channel that only the bot can write to.
 
 ---
 
-## Requirements
+## What you'll end up with
 
-- A Slack workspace where you have Admin or Owner access
-- A [Vercel](https://vercel.com) account (free tier is just fine)
+Once set up, Fritter will:
+
+1. **Every Monday at 6 PM UTC** (configurable), run a pairing round in your chosen channel(s).
+2. **Match channel members** into pairs (or trios), skipping anyone who opted out and avoiding recent repeat pairs.
+3. **Post an announcement** in the pairing channel and **DM each group** with scheduling tips.
+4. Respond to **slash commands** so members can opt in, opt out, check status, or (admins only) trigger a round immediately.
 
 ---
 
-## Step 1 — Create the Slack app
+## Before you start
 
-1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click Create New App -> From scratch.
-2. Name it! (e.g. `Fritter`) and choose your workspace.
+You will need:
 
-### OAuth scopes
-
-Under OAuth & Permissions -> Scopes -> Bot Token Scopes, add:
-
-| Scope | Why |
+| Requirement | Why |
 |---|---|
-| `channels:history` | Read public storage channel messages |
-| `groups:history` | Read private storage channel messages |
-| `channels:read` | Resolve channel names to IDs |
-| `groups:read` | Resolve private channel names to IDs |
+| A Slack workspace | Where the bot lives |
+| **Workspace Admin or Owner** access | Required for `/fritter-now` and installing the app |
+| A [Vercel](https://vercel.com) account | Free tier works |
+| [Node.js](https://nodejs.org) (for the Vercel CLI) | Used only to deploy — the app itself is Python |
+| [Python 3](https://www.python.org) (optional) | Only if you want to run locally |
+
+**Time estimate:** ~30 minutes for a first-time setup.
+
+---
+
+## Setup overview
+
+The order matters because Slack needs a live URL to verify your bot:
+
+```
+1. Create Slack channels
+2. Create the Slack app (save tokens; use placeholder URLs for now)
+3. Deploy this repo to Vercel
+4. Add environment variables on Vercel
+5. Put your cron secret in vercel.json and redeploy
+6. Point Slack slash commands at your Vercel URL
+7. Test with /fritter-join and /fritter-now
+```
+
+---
+
+## Step 1 — Create Slack channels
+
+Create two channels and **invite the Fritter bot** to both after you install the app in Step 2.
+
+| Channel | Visibility | Purpose |
+|---|---|---|
+| `#fritters` | Public (or private) | Pairing announcements are posted here |
+| `#fritter-storage` | **Private** | Hidden ledger — stores pairing history and opt-in/out state |
+
+You can use different names; if you do, set `PAIRING_CHANNEL` and `STORAGE_CHANNEL` in Step 4 to match.
+
+> **Important:** The bot must be a member of both channels. After installing the app, open each channel → Integrations → Add apps → add Fritter.
+
+---
+
+## Step 2 — Create the Slack app
+
+### 2a. Create the app
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps).
+2. Click **Create New App → From scratch**.
+3. Name it (e.g. `Fritter`) and select your workspace.
+
+### 2b. Add bot token scopes
+
+Go to **OAuth & Permissions → Scopes → Bot Token Scopes** and add:
+
+| Scope | Used for |
+|---|---|
+| `channels:history` | Read pairing history from the storage channel |
+| `groups:history` | Same, for private channels |
+| `channels:read` | Look up channel IDs by name |
+| `groups:read` | Same, for private channels |
 | `chat:write` | Post announcements and DMs |
 | `im:write` | Open 1:1 DMs |
-| `mpim:write` | Open group DMs |
+| `mpim:write` | Open group DMs (trios) |
 | `users:read` | Filter out bots and deactivated accounts |
-| `commands` | Register slash commands |
-| `conversations.members:read` / `mpim:read` | List channel members |
+| `commands` | Slash commands |
 
-> Slack also requires `conversations:members` (covered by `channels:read`/`groups:read`) to call `conversations.members`.
+### 2c. Install the app to your workspace
 
-### Install the app
+1. Still on **OAuth & Permissions**, click **Install to Workspace** and approve.
+2. Copy the **Bot User OAuth Token** (`xoxb-…`) — you'll need it in Step 4.
+3. Go to **Basic Information → App Credentials** and copy the **Signing Secret** — you'll need this too.
 
-Under OAuth & Permissions, click Install to Workspace. After approval, copy the Bot User OAuth Token (`xoxb-…`) for later!
+### 2d. Create slash commands
 
-### Signing secret
+Go to **Slash Commands → Create New Command** and create all four:
 
-Under Basic Information -> App Credentials, copy the Signing Secret.
+| Command | Description | Usage hint |
+|---|---|---|
+| `/fritter-join` | Opt in to matching | *(leave blank)* |
+| `/fritter-leave` | Opt out of matching | *(leave blank)* |
+| `/fritter-status` | Check your opt-in status | *(leave blank)* |
+| `/fritter-now` | Trigger a round now (admins only) | `[#channel]` |
 
-### Slash commands
-
-Under Slash Commands, create four commands. Set the Request URL for each to:
-
-```
-https://<your-vercel-domain>/api/slack/commands
-```
-
-| Command | Short description |
-|---|---|
-| `/fritter-join` | Opt in to Fritter matching |
-| `/fritter-leave` | Opt out of Fritter matching |
-| `/fritter-status` | Check your current opt status |
-| `/fritter-now` | (Admins only) Trigger a round immediately |
-
-`/fritter-now` accepts an optional channel argument, e.g. `/fritter-now #general`.
-
-### Event subscriptions
-
-Under Event Subscriptions, enable events and set the Request URL to:
+For **Request URL** on each command, use a placeholder for now — you'll update it in Step 6 after deploy:
 
 ```
-https://<your-vercel-domain>/api/slack/events
+https://placeholder.vercel.app/api/slack/commands
 ```
 
-Slack will send a verification challenge; Fritter handles it automatically once deployed.
-
----
-
-## Step 2 — Create the Slack channels
-
-Create two channels in your workspace and invite the Fritter bot to both:
-
-| Channel | Purpose |
-|---|---|
-| `#fritters` | Where pairing announcements are posted |
-| `#fritter-storage` (or your preferred name) | Private ledger — stores pairing history and opt state |
-
-Make `#fritter-storage` private so only the bot and admins can see it. The channel name must match the `PAIRING_CHANNEL` and `STORAGE_CHANNEL` environment variables.
+`/fritter-now` accepts an optional channel, e.g. `/fritter-now #general`.
 
 ---
 
 ## Step 3 — Deploy to Vercel
 
-### 3a. Fork or clone this repo
+### 3a. Clone this repository
 
 ```bash
 git clone https://github.com/stephenyang5/apple-fritter.git
@@ -111,42 +131,53 @@ npm i -g vercel
 vercel
 ```
 
-Follow the prompts. Vercel will detect the Python project and deploy it.
+Follow the prompts (link your Vercel account, confirm project settings). Vercel detects the Python app via `main.py` and deploys it.
 
-### 3c. Set environment variables
+When finished, note your deployment URL, e.g. `https://fritter-vercel.vercel.app`.
 
-In the Vercel dashboard under **Settings → Environment Variables**, add:
+### 3c. Verify the deployment
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `SLACK_BOT_TOKEN` | Yes | — | Bot User OAuth Token (`xoxb-…`) |
-| `SLACK_SIGNING_SECRET` | Yes | — | App signing secret from Basic Information |
-| `CRON_SECRET` | Yes | — | Secret token used to authenticate the cron endpoint (choose any strong random string) |
-| `PAIRING_CHANNEL` | No | `#fritters` | Channel where pairing announcements are posted |
-| `PAIRING_CHANNELS` | No | — | Comma-separated list of channels to run simultaneously (overrides `PAIRING_CHANNEL` when set) |
-| `STORAGE_CHANNEL` | No | `#fritter-storage` | Private channel used as a persistence ledger |
-| `NO_REPEAT_WEEKS` | No | `8` | Number of weeks before the same two people can be matched again |
-| `NO_REPEAT_MODE` | No | `weeks` | `weeks` (use `NO_REPEAT_WEEKS`) or `ever` (never re-pair the same two people) |
-| `GROUP_SIZE` | No | `2` | `2` for pairs, `3` for trios |
-| `TIMEZONE` | No | `America/New_York` | Timezone used for display timestamps |
-| `BIWEEKLY_PARITY` | No | `even` | `even` or `odd` — only run on ISO weeks with this parity; omit / set to `even` for every-week runs (see [Biweekly scheduling](#biweekly-scheduling)) |
+Open in a browser:
 
-### 3d. Update the cron secret in vercel.json
-
-Open `vercel.json` and replace `secret-password` with the same value you set for `CRON_SECRET`:
-
-```json
-{
-  "crons": [
-    {
-      "path": "/api/slack/run_round?secret=YOUR_CRON_SECRET",
-      "schedule": "0 18 * * 1"
-    }
-  ]
-}
+```
+https://<your-vercel-domain>/api/health
 ```
 
-Redeploy after saving:
+You should see:
+
+```json
+{"ok": true}
+```
+
+If that works, your app is running.
+
+---
+
+## Step 4 — Set environment variables
+
+In the [Vercel dashboard](https://vercel.com) → your project → **Settings → Environment Variables**, add:
+
+### Required
+
+| Variable | Value |
+|---|---|
+| `SLACK_BOT_TOKEN` | Bot token from Step 2c (`xoxb-…`) |
+| `SLACK_SIGNING_SECRET` | Signing secret from Step 2c |
+| `CRON_SECRET` | Any long random string you choose (e.g. run `openssl rand -hex 32`) |
+
+### Optional
+
+| Variable | Default | Description |
+|---|---|---|
+| `PAIRING_CHANNEL` | `#fritters` | Channel where announcements are posted |
+| `PAIRING_CHANNELS` | — | Comma-separated list to run multiple channels at once (overrides `PAIRING_CHANNEL`) |
+| `STORAGE_CHANNEL` | `#fritter-storage` | Private channel used as the data store |
+| `NO_REPEAT_WEEKS` | `8` | Weeks before the same two people can be re-paired |
+| `NO_REPEAT_MODE` | `weeks` | `weeks` (honor `NO_REPEAT_WEEKS`) or `ever` (never re-pair the same two people) |
+| `GROUP_SIZE` | `2` | `2` for pairs, `3` for trios |
+| `BIWEEKLY_PARITY` | `even` | `even` or `odd` — see [Biweekly scheduling](#biweekly-scheduling) |
+
+After adding variables, redeploy so they take effect:
 
 ```bash
 vercel --prod
@@ -154,27 +185,98 @@ vercel --prod
 
 ---
 
-## Step 4 — Wire Slack to your Vercel URL
+## Step 5 — Configure the cron job
 
-Once deployed, Vercel gives you a production URL like `https://fritter-vercel.vercel.app`.
+Fritter uses [Vercel Cron](https://vercel.com/docs/cron-jobs) to trigger pairing rounds automatically.
 
-1. Slash commands — go back to each slash command in the Slack app settings and confirm the Request URL is `https://<your-domain>/api/slack/commands`.
-2. Event subscriptions — confirm the Request URL is `https://<your-domain>/api/slack/events` and save. Slack will verify it immediately.
+Open `vercel.json` and replace the `secret=...` placeholder with the same value you set for `CRON_SECRET`:
 
-Your bot is now live. Run `/fritter-join` in your pairing channel to test opt-in, then use `/fritter-now` (as a workspace admin) to trigger a manual round.
+```json
+{
+  "crons": [
+    {
+      "path": "/api/slack/run_round?secret=YOUR_CRON_SECRET_HERE",
+      "schedule": "0 18 * * 1"
+    }
+  ]
+}
+```
+
+The default schedule `0 18 * * 1` means **every Monday at 6:00 PM UTC**. Change it using [cron syntax](https://crontab.guru) if you want a different day or time (times are always UTC).
+
+Redeploy after editing:
+
+```bash
+vercel --prod
+```
+
+> **Note:** Vercel Cron sends a **GET** request to that path. The endpoint also accepts POST if you want to trigger it manually with `curl`.
 
 ---
 
-## Biweekly scheduling
+## Step 6 — Connect Slack to your Vercel URL
 
-The cron job fires every Monday (`0 18 * * 1`) but Fritter checks the ISO week number before running:
+Go back to [api.slack.com/apps](https://api.slack.com/apps) → your app → **Slash Commands**.
 
-- `BIWEEKLY_PARITY=even` → runs only on even-numbered ISO weeks
-- `BIWEEKLY_PARITY=odd` → runs only on odd-numbered ISO weeks
+For **each** of the four commands, set Request URL to:
 
-To run **every week**, keep `BIWEEKLY_PARITY=even` and adjust the cron schedule so it fires on both even and odd weeks (the default `0 18 * * 1` already fires weekly — Fritter just skips the off-week internally).
+```
+https://<your-vercel-domain>/api/slack/commands
+```
 
-To change the day or time, edit the `schedule` in `vercel.json` using standard cron syntax (UTC).
+Save each command.
+
+### Invite the bot to your channels
+
+If you haven't already:
+
+1. Open `#fritters` → **Integrations** → **Add apps** → add Fritter.
+2. Open `#fritter-storage` → same steps.
+
+---
+
+## Step 7 — Test it
+
+Run these in your Slack workspace:
+
+| Step | Action | Expected result |
+|---|---|---|
+| 1 | In `#fritters`, run `/fritter-status` | Shows your opt-in status (new members default to **IN**) |
+| 2 | Run `/fritter-leave`, then `/fritter-status` | Status changes to **OUT** |
+| 3 | Run `/fritter-join` | Status back to **IN** |
+| 4 | As a workspace admin, run `/fritter-now` | Bot posts pairings in `#fritters` and DMs each group |
+
+If `/fritter-now` works, you're done. The cron job will run automatically on the schedule you set in `vercel.json`.
+
+---
+
+## How it works (under the hood)
+
+```
+Monday 6 PM UTC
+      │
+      ▼
+Vercel Cron ──GET──▶ /api/slack/run_round?secret=…
+      │
+      ▼
+Fetch members of pairing channel(s)
+      │
+      ▼
+Remove opted-out users (via /fritter-leave)
+      │
+      ▼
+Build pairs/trios (avoid recent matches)
+      │
+      ▼
+Post announcement in #fritters + DM each group
+      │
+      ▼
+Save pairing record to #fritter-storage
+```
+
+**Opt-in model:** Everyone in the pairing channel is included by default. Members run `/fritter-leave` to opt out and `/fritter-join` to opt back in.
+
+**Persistence:** Instead of a database, Fritter writes structured JSON messages to `#fritter-storage`. Each message is tagged with a marker (`FRITTER_HISTORY_V1`, `FRITTER_OPT_V1`, etc.) so the bot can read its own history back.
 
 ---
 
@@ -182,12 +284,23 @@ To change the day or time, edit the `schedule` in `vercel.json` using standard c
 
 | Command | Who can use | What it does |
 |---|---|---|
-| `/fritter-join` | Anyone | Opt in — you will be included in future rounds |
-| `/fritter-leave` | Anyone | Opt out — you will be skipped until you rejoin |
-| `/fritter-status` | Anyone | Shows whether you are currently opted in or out |
-| `/fritter-now [#channel]` | Workspace admins/owners only | Triggers an immediate pairing round; optionally specify a different channel |
+| `/fritter-join` | Anyone | Opt in — included in future rounds |
+| `/fritter-leave` | Anyone | Opt out — skipped until you rejoin |
+| `/fritter-status` | Anyone | Shows current opt-in status |
+| `/fritter-now [#channel]` | Workspace admins/owners only | Runs a pairing round immediately; optional channel argument |
 
-New channel members are **opted in by default**. They must run `/fritter-leave` to opt out.
+---
+
+## Biweekly scheduling
+
+By default, `BIWEEKLY_PARITY=even` means Fritter **only runs on even-numbered ISO weeks**. The cron job still fires every Monday, but the app skips "off" weeks internally.
+
+| Setting | Behavior |
+|---|---|
+| `BIWEEKLY_PARITY=even` | Runs on even ISO weeks (weeks 2, 4, 6, …) |
+| `BIWEEKLY_PARITY=odd` | Runs on odd ISO weeks (weeks 1, 3, 5, …) |
+
+To pair **every** Monday instead of every other week, remove or bypass the parity check in `api/slack.py` (the `should_run` block in the `cron_run_round` handler).
 
 ---
 
@@ -195,23 +308,26 @@ New channel members are **opted in by default**. They must run `/fritter-leave` 
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/slack/events` | Slack event subscriptions handler |
-| `POST` | `/api/slack/commands` | Slack slash commands handler |
-| `GET/POST` | `/api/slack/run_round?secret=…` | Cron trigger — runs pairing round(s) |
+| `POST` | `/api/slack/commands` | Slack slash commands |
 | `GET` | `/api/health` | Health check — returns `{"ok": true}` |
+| `GET` or `POST` | `/api/slack/run_round?secret=…` | Cron / manual pairing trigger (requires `CRON_SECRET`) |
 
 ---
 
 ## Local development
 
+Useful for testing changes before deploying.
+
 ### 1. Install dependencies
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+pip install uvicorn         # not bundled in requirements.txt
 ```
 
-### 2. Create a `.env` file
+### 2. Create a `.env` file in the project root
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-...
@@ -227,13 +343,23 @@ STORAGE_CHANNEL=#fritter-storage
 uvicorn main:app --reload --port 3000
 ```
 
-### 4. Expose it to Slack via ngrok
+Confirm: [http://localhost:3000/api/health](http://localhost:3000/api/health)
+
+### 4. Expose localhost to Slack with ngrok
+
+Slack can't reach `localhost` directly. Install [ngrok](https://ngrok.com) and run:
 
 ```bash
 ngrok http 3000
 ```
 
-Copy the `https://…ngrok-free.app` URL and use it as the base URL for your slash command and event subscription request URLs in the Slack app settings while developing.
+Copy the `https://….ngrok-free.app` URL and temporarily set your Slack slash command Request URLs to:
+
+```
+https://<your-ngrok-url>/api/slack/commands
+```
+
+Remember to switch them back to your Vercel URL when done.
 
 ---
 
@@ -242,15 +368,30 @@ Copy the `https://…ngrok-free.app` URL and use it as the base URL for your sla
 ```
 fritter-vercel/
 ├── api/
-│   ├── slack.py            # Core bot logic (FastAPI + Slack Bolt)
-│   └── slack/
-│       ├── commands.py     # Vercel file-based handler for slash commands (fallback)
-│       ├── events.py       # Vercel file-based handler for events (fallback)
-│       └── run_round.py    # Vercel file-based handler for the cron endpoint
-├── main.py                 # Vercel entrypoint — re-exports the FastAPI app
-├── requirements.txt
-└── vercel.json             # Cron job definition
+│   └── slack.py        # All bot logic, pairing algorithm, and HTTP routes
+├── main.py             # Vercel entrypoint — exports the FastAPI app
+├── requirements.txt    # Python dependencies
+├── vercel.json         # Cron schedule
+└── README.md
 ```
+
+---
+
+## Troubleshooting
+
+| Problem | Likely cause | Fix |
+|---|---|---|
+| `/fritter-join` returns nothing or times out | Slash command URL wrong or app not deployed | Confirm Request URL is `https://<domain>/api/slack/commands` and `/api/health` works |
+| `dispatch_failed` in Slack | Server error or bad signing secret | Check Vercel function logs; verify `SLACK_SIGNING_SECRET` |
+| Bot can't find `#fritter-storage` | Bot not invited to the channel | Add Fritter to the private storage channel |
+| Pairing runs but skips everyone | All members opted out | Run `/fritter-status`; have people run `/fritter-join` |
+| Cron never runs | Wrong `CRON_SECRET` in `vercel.json` | Secret in the URL must exactly match the `CRON_SECRET` env var |
+| Cron runs but pairing skipped | Biweekly parity | Check Vercel logs for `"ran": false`; see [Biweekly scheduling](#biweekly-scheduling) |
+| `/fritter-now` says admins only | Not a workspace admin | Only admins/owners can trigger manual rounds |
+
+**View logs:** Vercel dashboard → your project → **Logs** (or run `vercel logs` in the CLI).
+
+---
 
 ## Dependencies
 
@@ -258,5 +399,4 @@ fritter-vercel/
 fastapi==0.115.0
 slack-bolt==1.22.0
 python-dotenv==1.0.1
-pytz==2024.1
 ```
