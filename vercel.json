@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/slack/run_round?secret=...",
+      "path": "/api/slack/run_round?secret=<your-secret-password>",
       "schedule": "0 18 * * 1"
     }
   ]
